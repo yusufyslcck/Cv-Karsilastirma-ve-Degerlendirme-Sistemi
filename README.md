@@ -1,5 +1,7 @@
 # 👨‍💻 Akıllı CV Karşılaştırma ve Değerlendirme Sistemi
 
+
+
 <details>
   <summary>📸 <b>Uygulama Ekran Görüntülerini Görmek İçin Tıklayın</b></summary>
   <br>
@@ -8,6 +10,8 @@
     <img src="images/Ekran_alt.png" alt="Uygulama Alt Kısım" width="100%" style="display: block; margin-top: 0;">
   </p>
 </details>
+
+
 
 **NLP (Doğal Dil İşleme) ve OCR destekli, yeni nesil CV analiz aracı.**
 
@@ -76,11 +80,14 @@ streamlit run app.py
 
 ## 📂 Proje Yapısı
 
-cv_karsilastirma_sistemi/
-├── app.py               # Ana uygulama ve arayüz
-├── cv_parser.py         # PDF okuma ve OCR (EasyOCR) modülü
-├── comparison_engine.py # Yapay zeka puanlama motoru
-├── data_extractor.py    # Metinden yapılandırılmış veri ayıklama
-├── requirements.txt     # Bağımlılık listesi
-└── data/                # Yüklenen CV'lerin tutulduğu klasör (otomatik oluşur)
-```
+app.py: Web arayüzü ve ana uygulama
+
+cv_parser.py: PDF okuma ve OCR modülü
+
+comparison_engine.py: Semantik puanlama motoru
+
+data_extractor.py: NLP veri ayıklama modülü
+
+data/: Geçici CV kayıt klasörü
+
+
