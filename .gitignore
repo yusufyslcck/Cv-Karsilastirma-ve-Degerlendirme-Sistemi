@@ -1,0 +1,14 @@
+# Sanal Ortamlar (GİTMESİN)
+.venv/
+cv_compare_env/
+venv/
+env/
+
+# Python Gereksiz Dosyaları
+__pycache__/
+*.pyc
+
+# Data klasörü kod tarafından oluşturulsa bile GİTMESİN
+data/
+
+# Not: images klasörü otomatik olarak gidecek, onu yazmıyoruz.
