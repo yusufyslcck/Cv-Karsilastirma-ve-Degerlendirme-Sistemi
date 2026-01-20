@@ -1,10 +1,6 @@
 # 👨‍💻 Akıllı CV Karşılaştırma ve Değerlendirme Sistemi
 
 
-<<<<<<< HEAD
-=======
-
->>>>>>> a730a569bd041d59e76f3bba1d76f5df7426d76e
 <details>
   <summary>📸 <b>Uygulama Ekran Görüntülerini Görmek İçin Tıklayın</b></summary>
   <br>
@@ -13,7 +9,6 @@
     <img src="images/Ekran_alt.png" alt="Uygulama Alt Kısım" width="100%" style="display: block; margin-top: 0;">
   </p>
 </details>
-
 
 
 **NLP (Doğal Dil İşleme) ve OCR destekli, yeni nesil CV analiz aracı.**
@@ -93,7 +88,3 @@ data_extractor.py: NLP veri ayıklama modülü
 
 data/: Geçici CV kayıt klasörü
 
-<<<<<<< HEAD
-=======
-
->>>>>>> a730a569bd041d59e76f3bba1d76f5df7426d76e
