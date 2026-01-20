@@ -1,67 +1,109 @@
-"""PDF dosyalarından metin çıkarma ve CV bölümlerini ayrıştırma modülü."""
+"""
+CV Parser Modülü (Hata Odaklı Sessiz Mod)
+Başarılı işlemleri sessizce yapar, sadece hataları raporlar.
+CV içeriklerini terminale basmaz.
+"""
 
 import pdfplumber
 import re
-from typing import Dict, Optional
+import traceback
+from typing import Dict, Optional, List
 
+# --- Opsiyonel Kütüphaneler ve OCR Hazırlığı ---
 try:
     import easyocr
-    import fitz
+    import fitz  
     import numpy as np
-    print("EasyOCR modülleri yükleniyor...")
+    
+    # Başlangıçta sadece bir kere bilgi verir, sürekli yazmaz.
     OCR_READER = easyocr.Reader(['tr', 'en'], gpu=False, verbose=False)
-    print("✅ EasyOCR hazır (Türkçe + İngilizce, PyMuPDF ile)")
+
 except ImportError as e:
-    print(f"⚠️ EasyOCR yüklenemedi: {e}")
+    print(f"⚠️ UYARI: EasyOCR modülü eksik. Sadece metin tabanlı PDF'ler okunabilir.")
     OCR_READER = None
 except Exception as e:
-    print(f"⚠️ EasyOCR başlatılamadı: {e}")
+    print(f"❌ KRİTİK: OCR motoru başlatılamadı: {e}")
     OCR_READER = None
 
+
+# --- Sabitler: Tanınan Bölüm Başlıkları ---
+KNOWN_SECTION_HEADERS = [
+    "EĞİTİM", "Egitim", "EDUCATION", 
+    "DENEYİM", "Deneyim", "EXPERIENCE", "İŞ DENEYİMİ",
+    "YETENEKLER", "Yetenekler", "SKILLS", "YETKİNLİKLER",
+    "TEKNİK BECERİLER", "TEKNIK BECERILER", "TEKNİK", "TECHNICAL SKILLS",
+    "YABANCI DİL", "YABANCI DİLLER", "LANGUAGES", "DİL", "DIL",
+    "KURSLAR", "KURS", "COURSES",
+    "SERTİFİKALAR", "CERTIFICATIONS", "SERTIFIKALAR",
+    "KİŞİSEL BECERİLER", "KISISEL BECERILER", "PERSONAL SKILLS",
+    "REFERANSLAR", "REFERANS", "REFERENCES",
+    "SUMMARY", "ÖZET", "PROFIL", "PROFILE",
+    "CONTACT", "İLETİŞİM", "ILETISIM",
+    "PROJELER", "PROJECTS"
+]
+
+
+# --- Yardımcı Fonksiyonlar ---
+
+def preprocess_text(text: str) -> str:
+    """Çıkarılan ham metni temizler."""
+    if not text:
+        return ""
+    text = re.sub(r'[\r\n]+', ' ', text)
+    text = re.sub(r'\s{2,}', ' ', text)
+    return text.strip()
+
+
+def custom_split(pattern: str, text: str) -> List[str]:
+    """re.split fonksiyonunun özelleştirilmiş hali."""
+    parts = re.split(pattern, text, flags=re.IGNORECASE)
+    return [p for p in parts if p and p.strip()]
+
+
+# --- Ana İşlem Fonksiyonları ---
+
 def extract_text_with_ocr(pdf_path: str) -> Optional[str]:
-    """EasyOCR ile taranmış PDF'den metin çıkarır."""
+    """EasyOCR ve PyMuPDF kullanarak metin çıkarır."""
     if not OCR_READER:
-        print("❌ OCR mevcut değil")
+        print("❌ HATA: OCR gerekli ama OCR motoru yüklü değil.")
         return None
+        
     try:
-        import fitz
-        print(f"📄 OCR başlatılıyor: {pdf_path}")
-        
-        # PyMuPDF ile PDF'i aç
+        # İşlem başlıyor 
         doc = fitz.open(pdf_path)
-        print(f"✅ {len(doc)} sayfa bulundu")
-        
         full_text = ""
-        for i, page in enumerate(doc, 1):
-            print(f"  📖 Sayfa {i}/{len(doc)} okunuyor...")
-            
+        
+        for page in doc:
             pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
             img_data = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
             
             if pix.n == 4:
                 img_data = img_data[:, :, :3]
+            
+            # detail=0 ile sadece metin
             result = OCR_READER.readtext(img_data, detail=0, paragraph=True)
             page_text = " ".join(result)
             full_text += page_text + "\n\n"
-            print(f"  ✅ Sayfa {i}: {len(page_text)} karakter okundu")
         
         doc.close()
         
-        if full_text.strip():
-            print(f"✅ OCR tamamlandı: Toplam {len(full_text)} karakter")
-            return full_text
-        else:
-            print("⚠️ OCR hiç metin bulamadı")
+        if not full_text.strip():
+            print(f"⚠️ UYARI: OCR çalıştı ama {pdf_path} dosyasında metin bulunamadı.")
             return None
+            
+        return full_text
+
     except Exception as e:
-        print(f"❌ OCR Hatası: {e}")
-        import traceback
-        traceback.print_exc()
+        # BURASI ÖNEMLİ: Hata olursa terminalde görünecek
+        print(f"❌ OCR HATASI ({pdf_path}): {e}")
+        traceback.print_exc() # Hatanın detayını da basar
         return None
 
+
 def extract_text_from_pdf(pdf_path: str) -> Optional[str]:
-    """PDF dosyasından metin çıkarır, gerekirse OCR kullanır."""
+    """PDF dosyasından metin çıkarmayı dener."""
     try:
+        # Yöntem 1: Standart Metin Çıkarma
         with pdfplumber.open(pdf_path) as pdf:
             full_text = ""
             for page in pdf.pages:
@@ -69,81 +111,50 @@ def extract_text_from_pdf(pdf_path: str) -> Optional[str]:
                 if text:
                     full_text += text + "\n\n"
             
+            # Başarılıysa sessizce dön
             if full_text and len(full_text.strip()) > 100:
-                print(f"✅ pdfplumber başarılı: {len(full_text)} karakter")
                 return full_text
             
+            # Yöntem 2: OCR
             if OCR_READER:
-                print(f"⚠️ PDF'de metin yetersiz ({len(full_text.strip())} karakter), OCR deneniyor...")
                 ocr_text = extract_text_with_ocr(pdf_path)
                 if ocr_text:
                     return ocr_text
-                else:
-                    print("⚠️ OCR de başarısız, mevcut metin döndürülüyor")
             
             return full_text if full_text else None
             
     except Exception as e:
-        print(f"Hata: PDF okunamadı {pdf_path}. Hata: {e}")
+        # Hata olursa basar
+        print(f"❌ PDF OKUMA HATASI ({pdf_path}): {e}")
         return None
 
-def preprocess_text(text: str) -> str:
-    """Metni temizler ve düzenler."""
-    if not text:
-        return ""
-    text = re.sub(r'[\r\n]+', ' ', text)
-    text = re.sub(r'\s{2,}', ' ', text)
-    return text.strip()
 
 def extract_sections_simple(text: str) -> Dict[str, str]:
-    """CV metninden bölümleri ayırır ve yapılandırır."""
-    section_titles = [
-        "EĞİTİM", "Egitim", "DENEYİM", "Deneyim", "YETENEKLER", "Yetenekler",
-        "TEKNİK BECERİLER", "TEKNIK BECERILER", "TEKNİK", "TECHNICAL SKILLS",
-        "YABANCI DİL", "YABANCI DİLLER", "LANGUAGES", "DİL", "DIL",
-        "KURSLAR", "KURS", "COURSES",
-        "SERTİFİKALAR", "CERTIFICATIONS",
-        "KİŞİSEL BECERİLER", "KISISEL BECERILER", "PERSONAL SKILLS",
-        "REFERANSLAR", "REFERANS", "REFERENCES",
-        "SKILLS", "EXPERIENCE", "EDUCATION", "SUMMARY", "ÖZET", "CONTACT", "İLETİŞİM", "PROJELER"
-    ]
-    
-    pattern = r'\b(' + '|'.join(re.escape(title) for title in section_titles) + r')\b'
-    
-    parts = replit_with_content(pattern, text)
+    """Ham metni regex kullanarak mantıksal bölümlere ayırır."""
+    pattern = r'\b(' + '|'.join(re.escape(title) for title in KNOWN_SECTION_HEADERS) + r')\b'
+    parts = custom_split(pattern, text)
     
     sections = {}
     current_title = "GENERAL"
     
     for part in parts:
-        if part.strip().upper() in [t.upper() for t in section_titles]:
-            current_title = part.strip().upper()
-            sections[current_title] = ""
+        part_clean = part.strip()
+        if part_clean.upper() in [t.upper() for t in KNOWN_SECTION_HEADERS]:
+            current_title = part_clean.upper()
+            if current_title not in sections:
+                sections[current_title] = ""
         elif current_title in sections:
-            sections[current_title] += part.strip() + " "
+            sections[current_title] += part_clean + " "
         else:
-            sections["GENERAL"] = sections.get("GENERAL", "") + part.strip() + " "
+            sections["GENERAL"] = sections.get("GENERAL", "") + part_clean + " "
 
     return {k: v.strip() for k, v in sections.items() if v.strip()}
 
-def replit_with_content(pattern: str, text: str) -> list:
-    """re.split'in yakalanan grupları dahil etme versiyonu."""
-    parts = re.split(pattern, text, flags=re.IGNORECASE)
-    return [p for p in parts if p and p.strip()]
 
 def parse_cv(pdf_path: str) -> Dict[str, str]:
-    """PDF'den metin çıkarır ve bölümlere ayırır."""
+    """Modülün ana giriş noktasıdır."""
     raw_text = extract_text_from_pdf(pdf_path)
     if not raw_text:
         return {}
     
-    print(f"\n🔍 DEBUG - Ham metin ilk 600 karakter:\n{raw_text[:600]}\n")
-    print(f"🔍 DEBUG - Ham metin son 300 karakter:\n{raw_text[-300:]}\n")
-    
-    sections = extract_sections_simple(raw_text)
-    
-    print(f"🔍 DEBUG - Bulunan bölümler: {list(sections.keys())}")
-    for key, value in sections.items():
-        print(f"  - {key}: {len(value)} karakter (ilk 100: {value[:100]}...)")
-    
-    return sections
+    return extract_sections_simple(raw_text)

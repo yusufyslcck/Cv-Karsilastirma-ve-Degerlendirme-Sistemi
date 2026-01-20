@@ -1,215 +1,265 @@
-"""CV verilerinden yapılandırılmış bilgi çıkarma modülü."""
+"""
+Data Extractor Modülü
+Bu modül, metin haline getirilmiş CV verilerinden yapılandırılmış bilgi
+(Deneyim, Eğitim, Yetenekler vb.) çıkarmak için spaCy ve Regex kullanır.
+"""
 
-import spacy
-from typing import Dict, List, Any
-from collections import defaultdict
 import re
+import spacy
+from typing import Dict, List, Any, Optional
+from collections import defaultdict
 
+# --- Model Yapılandırması ---
 CUSTOM_NER_MODEL_NAME = "en_core_web_sm"
 
 try:
     nlp = spacy.load(CUSTOM_NER_MODEL_NAME)
-    print(f"NLP: '{CUSTOM_NER_MODEL_NAME}' modeli başarıyla yüklendi.")
+    print(f"✅ NLP: '{CUSTOM_NER_MODEL_NAME}' modeli başarıyla yüklendi.")
 except OSError:
-    print(f"HATA: '{CUSTOM_NER_MODEL_NAME}' modeli bulunamadi. Temel spaCy modeline geri donuluyor.")
+    print(f"⚠️ HATA: '{CUSTOM_NER_MODEL_NAME}' bulunamadı. Temel modele geçiliyor.")
     try:
         nlp = spacy.load("en_core_web_sm")
-        print("NLP: Temel 'en_core_web_sm' modeli yüklendi.")
+        print("✅ NLP: Yedek model 'en_core_web_sm' yüklendi.")
     except Exception as e:
-        print(f"KRİTİK HATA: Hiçbir spaCy modeli yüklenemedi. NLP islemleri yapilamayacak. Hata: {e}")
+        print(f"❌ KRİTİK HATA: Hiçbir spaCy modeli yüklenemedi! Hata: {e}")
         nlp = None
 
-def extract_skills(text: str) -> List[str]:
-    """Yetenekler bölümünden teknolojileri ve becerileri çıkarır."""
+
+# --- Regex Sabitleri (Performans İçin Derlendi) ---
+# Dil seviyelerini yakalamak için (Advanced, B2, Orta vb.)
+LEVEL_PATTERN = re.compile(
+    r"(advanced|intermediate|basic|fluent|beginner|native|"
+    r"ileri|orta|başlangıç|başlangic|çok iyi|iyi|a1|a2|b1|b2|c1|c2)", 
+    re.IGNORECASE
+)
+
+# Tarihleri yakalamak için (1990-2099 arası yıllar veya 'Present/Devam')
+DATE_PATTERN = re.compile(r'(?:19|20)\d{2}|Present|Devam|Günümüz', re.IGNORECASE)
+
+
+# --- Yardımcı Fonksiyonlar ---
+
+def extract_list_from_text(text: str) -> List[str]:
+    """
+    Virgül, noktalı virgül veya yeni satırla ayrılmış metinleri temiz bir listeye çevirir.
+    Örn: "Python, Java; C++" -> ["Python", "Java", "C++"]
+    """
     if not text:
         return []
     
-    skills = [s.strip() for s in re.split(r'[,;•\n\t]', text) if len(s.strip()) > 2 and s.strip().count(' ') < 4]
-    return list(set([s.lower() for s in skills if s]))
+    # Metni yaygın ayırıcılara göre böl
+    items = [s.strip() for s in re.split(r'[,;•\n\t]', text) if len(s.strip()) > 1]
+    
+    # Tekrarları önlemek için set kullanıp listeye çeviriyoruz
+    return sorted(list(set([s for s in items if s])))
 
 
 def extract_languages(text: str) -> List[Dict[str, str]]:
-    """Yabancı dil ve seviyelerini çıkarır."""
-    if not text:
-        return []
-
-    parts = [p.strip() for p in re.split(r'[;,\n\t•-]', text) if p.strip()]
+    """
+    Metin içindeki yabancı dilleri ve varsa seviyelerini çıkarır.
+    Örn: "İngilizce (İleri)" -> {'dil': 'İngilizce', 'seviyesi': 'İleri'}
+    """
+    if not text: return []
+    
+    parts = [p.strip() for p in re.split(r'[;,\n\t•]', text) if p.strip()]
     langs = []
-    level_pattern = re.compile(r"(advanced|intermediate|basic|fluent|beginner|ileri|orta|başlangıç|başlangic|çok iyi|iyi)", re.I)
+    
     for p in parts:
-        match = level_pattern.search(p)
+        if len(p) < 2: continue 
+        
+        match = LEVEL_PATTERN.search(p)
         if match:
             level = match.group(0)
-            name = level_pattern.sub('', p).strip(' -,:;')
+            # Seviye bilgisini metinden çıkarıp sadece dil ismini bırak
+            name = LEVEL_PATTERN.sub('', p).strip(' -,:;()')
+            if not name: name = p # Eğer isim silindiyse orijinali kullan
             langs.append({"dil": name, "seviyesi": level})
         else:
             langs.append({"dil": p, "seviyesi": ""})
-
+            
     return langs
 
 
 def extract_references(text: str) -> List[Dict[str, str]]:
-    """Referans bilgilerini çıkarır."""
-    if not text:
+    """
+    Referans bölümünü analiz eder.
+    'İstek üzerine verilecektir' gibi boş ibareleri eler.
+    """
+    if not text: return []
+    
+    # Yaygın 'boş' referans cümlelerini kontrol et
+    if len(text) < 50 and ("istek" in text.lower() or "request" in text.lower()):
         return []
 
-    entries = [e.strip() for e in re.split(r'\n\n|\n-\s|\n•|;|\n', text) if e.strip()]
+    # Satır satır analiz
+    lines = [line.strip() for line in text.split('\n') if len(line.strip()) > 3]
     refs = []
-    email_re = re.compile(r"[\w\.-]+@[\w\.-]+")
-    phone_re = re.compile(r"\+?\d[\d\s\-\(\)]{6,}\d")
-
-    for e in entries:
-        ref = {"raw": e, "email": "", "phone": "", "name": ""}
-        em = email_re.search(e)
-        ph = phone_re.search(e)
-        if em:
-            ref['email'] = em.group(0)
-        if ph:
-            ref['phone'] = ph.group(0)
-
-        name = e.split('\n')[0]
-        name = re.sub(r"\b(Email:|E-mail:|Tel:|Phone:|Telefon:)\b.*", '', name, flags=re.I).strip()
-        ref['name'] = name
-        refs.append(ref)
-
+    
+    for line in lines:
+        # Başlık tekrarını ve e-posta/telefon satırlarını atla (basit filtre)
+        if "referans" in line.lower(): continue
+        
+        # Basit isim kontrolü (En az iki kelime olmalı)
+        if len(line.split()) >= 2 and len(line) < 50:
+             refs.append({"name": line, "raw": line})
+             
     return refs
 
 
+# --- Ana Yapılandırma Fonksiyonları ---
+
 def extract_experience_details(experience_text: str) -> List[Dict[str, str]]:
-    """Deneyim bilgilerini yapılandırır."""
-    if not nlp or not experience_text:
-        return []
+    """
+    Deneyim metnini iş pozisyonlarına (bloklara) ayırır ve detaylandırır.
+    NLP ve Regex kullanarak tarih ve kurum ismini bulmaya çalışır.
+    """
+    if not nlp or not experience_text: return []
 
-    doc = nlp(experience_text)
     experiences = []
-    current_experience = defaultdict(str)
-    experience_entries = experience_text.split('\n\n')
     
-    for entry in experience_entries:
-        if not entry.strip():
-            continue
+    # Yöntem 1: Çift satır boşluğu ile ayırma (Standart format)
+    entries = re.split(r'\n\s*\n', experience_text.strip())
+    
+    # Yöntem 2: Eğer tek blok geldiyse, tarih desenlerine göre bölmeyi dene
+    if len(entries) <= 1:
+        lines = experience_text.split('\n')
+        current_block = []
+        entries = [] # Reset
+        
+        for line in lines:
+            # Satırda tarih varsa ve blok zaten doluysa -> Yeni Blok Başlangıcı
+            if DATE_PATTERN.search(line) and len(current_block) > 0:
+                entries.append("\n".join(current_block))
+                current_block = [line]
+            else:
+                current_block.append(line)
+        
+        if current_block:
+            entries.append("\n".join(current_block))
+            
+    # Eğer hala bölünemediyse orijinal metni tek parça al
+    if not entries:
+        entries = [experience_text]
 
-        entry_doc = nlp(entry.strip())
+    # Blokları işle ve yapılandır
+    for entry in entries:
+        if len(entry.strip()) < 5: continue 
+
         details = defaultdict(str)
         
-        for ent in entry_doc.ents:
-            if ent.label_ in ["DATE", "GPE"]:
+        # NLP ile Varlık İsmi Tanıma (NER)
+        doc = nlp(entry.strip())
+        for ent in doc.ents:
+            if ent.label_ == "DATE":
                 details["Tarih"] += ent.text + " "
-            elif ent.label_ == "ORG":
-                if not details["Kurum"]:
-                    details["Kurum"] = ent.text
+            elif ent.label_ == "ORG": # Organizasyon/Şirket
+                if not details["Kurum"]: details["Kurum"] = ent.text
         
+        # İlk satırı genelde başlık/pozisyon olarak kabul et
         first_line = entry.split('\n')[0].strip()
         details["Raw_Entry"] = first_line
-        if details.get("Kurum") or details.get("Tarih"):
+        
+        # Sadece anlamlı verileri ekle
+        if details.get("Kurum") or details.get("Tarih") or details.get("Raw_Entry"):
             experiences.append(dict(details))
-    
-    if not experiences and experience_text.strip():
-        experiences.append({"Raw_Entry": experience_text.strip()})
-
+            
     return experiences
 
 
 def extract_education_details(education_text: str) -> List[Dict[str, str]]:
-    """Eğitim bilgilerini yapılandırır."""
-    if not nlp or not education_text:
-        return []
+    """
+    Eğitim metnini okullara/derecelere ayırır.
+    Üniversite veya Okul kelimelerini baz alarak bloklama yapar.
+    """
+    if not nlp or not education_text: return []
 
-    education_entries = education_text.split('\n\n')
+    # Yöntem 1: Çift satır
+    entries = re.split(r'\n\s*\n', education_text.strip())
+    
+    # Yöntem 2: Anahtar kelimeye göre bölme (Üniversite, Lise, School vb.)
+    if len(entries) <= 1:
+        lines = education_text.split('\n')
+        current_block = []
+        entries = [] 
+        
+        keywords = ["niversi", "School", "Lise", "Bachelor", "Master", "PhD", "Lisans"]
+        
+        for line in lines:
+            # Satırda anahtar kelime varsa -> Yeni Blok
+            if any(k in line for k in keywords) and len(current_block) > 0:
+                 entries.append("\n".join(current_block))
+                 current_block = [line]
+            else:
+                 current_block.append(line)
+        
+        if current_block: entries.append("\n".join(current_block))
+
     education_list = []
-
-    for entry in education_entries:
-        if not entry.strip():
-            continue
+    for entry in entries:
+        if len(entry.strip()) < 5: continue
         
         details = defaultdict(str)
-        entry_doc = nlp(entry.strip())
+        doc = nlp(entry.strip())
         
-        for ent in entry_doc.ents:
-             if ent.label_ in ["DATE"]:
-                details["Tarih"] += ent.text + " "
-             elif ent.label_ in ["ORG"]:
-                details["Kurum"] = ent.text
+        for ent in doc.ents:
+             if ent.label_ == "DATE": details["Tarih"] += ent.text + " "
+             elif ent.label_ == "ORG": details["Kurum"] = ent.text
 
         details["Raw_Entry"] = entry.strip()
-        
         if details.get("Raw_Entry"):
             education_list.append(dict(details))
 
     return education_list
 
 
-# --- ANA ÇIKARIM FONKSİYONU ---
 def extract_structured_data(sections: Dict[str, str]) -> Dict[str, Any]:
     """
-    Tüm bölümlerden yapılandırılmış veriyi çıkarır (Hafta 7-9 görevi).
+    Modülün ana fonksiyonu.
+    Sözlük halindeki ham bölümleri alır, ilgili ayrıştırıcı fonksiyonlara gönderir
+    ve son kullanıcıya sunulacak yapılandırılmış veriyi (JSON benzeri) oluşturur.
     """
     structured_data = {
-        "DENEYİM": [],
-        "EĞİTİM": [],
-        "YETENEKLER": [],
-        "SERTİFİKALAR": [], # Yeni eklenecek alanlar
-        "PROJELER": [],     # Yeni eklenecek alanlar
-        "TEKNİK_BECERİLER": [],
-        "YABANCI_DİL": [],
-        "KURSLAR": [],
-        "KİŞİSEL_BECERİLER": [],
-        "REFERANSLAR": [],
+        "DENEYİM": [], "EĞİTİM": [], "YETENEKLER": [], "SERTİFİKALAR": [], 
+        "PROJELER": [], "TEKNİK_BECERİLER": [], "YABANCI_DİL": [],
+        "KURSLAR": [], "KİŞİSEL_BECERİLER": [], "REFERANSLAR": [],
         "ÖZET": sections.get("ÖZET", sections.get("SUMMARY", ""))
     }
     
-    # 1. Deneyim Çıkarımı
-    experience_text = sections.get("DENEYİM", sections.get("EXPERIENCE", ""))
-    if experience_text:
-        structured_data["DENEYİM"] = extract_experience_details(experience_text)
-        
-    # 2. Eğitim Çıkarımı
-    education_text = sections.get("EĞİTİM", sections.get("EDUCATION", ""))
-    if education_text:
-        structured_data["EĞİTİM"] = extract_education_details(education_text)
-        
-    # 3. Yetenek Çıkarımı
-    skills_text = sections.get("YETENEKLER", sections.get("SKILLS", ""))
-    if skills_text:
-        structured_data["YETENEKLER"] = extract_skills(skills_text)
+    # Karmaşık Alanlar (Eğitim ve Deneyim)
+    if sections.get("DENEYİM") or sections.get("EXPERIENCE"):
+        raw_exp = sections.get("DENEYİM") or sections.get("EXPERIENCE")
+        structured_data["DENEYİM"] = extract_experience_details(raw_exp)
+    
+    if sections.get("EĞİTİM") or sections.get("EDUCATION"):
+        raw_edu = sections.get("EĞİTİM") or sections.get("EDUCATION")
+        structured_data["EĞİTİM"] = extract_education_details(raw_edu)
 
-    # 3b. Teknik Beceriler (ayrı bir bölüm varsa)
-    tech_text = sections.get("TEKNİK BECERİLER", sections.get("TEKNIK BECERILER", ""))
-    if tech_text:
-        structured_data["TEKNİK_BECERİLER"] = extract_skills(tech_text)
+    # Liste Tabanlı Basit Alanlar
+    mappings = [
+        ("YETENEKLER", ["YETENEKLER", "SKILLS"]),
+        ("TEKNİK_BECERİLER", ["TEKNİK BECERİLER", "TECHNICAL SKILLS"]),
+        ("SERTİFİKALAR", ["SERTİFİKALAR", "CERTIFICATIONS"]),
+        ("KURSLAR", ["KURSLAR", "COURSES"]),
+        ("KİŞİSEL_BECERİLER", ["KİŞİSEL BECERİLER", "PERSONAL SKILLS"]),
+    ]
 
-    # 4. Sertifikalar Çıkarımı (Sadece metni al)
-    # İleride NER ile Sertifika Adı ve Veriliş Tarihi gibi alt alanlar çıkarılmalıdır.
-    certs_text = sections.get("SERTİFİKALAR", sections.get("CERTIFICATIONS", ""))
-    if certs_text:
-        structured_data["SERTİFİKALAR"].append({"Raw_Entry": certs_text.strip()})
+    for target_key, source_keys in mappings:
+        text = next((sections.get(k) for k in source_keys if sections.get(k)), None)
+        if text:
+            structured_data[target_key] = extract_list_from_text(text)
 
-    # 4b. Kurslar
-    courses_text = sections.get("KURSLAR", sections.get("COURSES", ""))
-    if courses_text:
-        structured_data["KURSLAR"].append({"Raw_Entry": courses_text.strip()})
+    # Özel Formatlı Alanlar
+    lang_text = sections.get("YABANCI DİL") or sections.get("LANGUAGES")
+    if lang_text:
+        structured_data["YABANCI_DİL"] = extract_languages(lang_text)
 
-    # 5. Projeler Çıkarımı (Sadece metni al)
-
-    # 5. Projeler Çıkarımı (Sadece metni al)
-    projects_text = sections.get("PROJELER", "")
-    if projects_text:
-        structured_data["PROJELER"].append({"Raw_Entry": projects_text.strip()})
-
-    # 6. Yabancı Dil
-    languages_text = sections.get("YABANCI DİL", sections.get("YABANCI DİLLER", sections.get("LANGUAGES", "")))
-    if languages_text:
-        structured_data["YABANCI_DİL"] = extract_languages(languages_text)
-
-    # 7. Kişisel Beceriler
-    personal_text = sections.get("KİŞİSEL BECERİLER", sections.get("KISISEL BECERILER", sections.get("PERSONAL SKILLS", "")))
-    if personal_text:
-        structured_data["KİŞİSEL_BECERİLER"] = extract_skills(personal_text)
-
-    # 8. Referanslar
-    refs_text = sections.get("REFERANSLAR", sections.get("REFERANS", sections.get("REFERENCES", "")))
+    refs_text = sections.get("REFERANSLAR") or sections.get("REFERENCES")
     if refs_text:
         structured_data["REFERANSLAR"] = extract_references(refs_text)
 
+    proj_text = sections.get("PROJELER") or sections.get("PROJECTS")
+    if proj_text:
+        # Projeler şimdilik tek bir blok olarak saklanıyor
+        structured_data["PROJELER"].append({"Raw_Entry": proj_text.strip()})
 
     return structured_data
