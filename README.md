@@ -1,6 +1,10 @@
 # 👨‍💻 Akıllı CV Karşılaştırma ve Değerlendirme Sistemi
 
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> a730a569bd041d59e76f3bba1d76f5df7426d76e
 <details>
   <summary>📸 <b>Uygulama Ekran Görüntülerini Görmek İçin Tıklayın</b></summary>
   <br>
@@ -89,3 +93,7 @@ data_extractor.py: NLP veri ayıklama modülü
 
 data/: Geçici CV kayıt klasörü
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> a730a569bd041d59e76f3bba1d76f5df7426d76e
